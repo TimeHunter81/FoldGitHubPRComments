@@ -1,0 +1,19 @@
+{
+  "name": "fold-github-pr-comments",
+  "version": "0.1.0",
+  "description": "Chrome extension that folds older GitHub PR conversation comments by default.",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "chrome-extension",
+    "github",
+    "pull-request"
+  ],
+  "author": "",
+  "license": "GPL-3.0-or-later",
+  "type": "commonjs",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
