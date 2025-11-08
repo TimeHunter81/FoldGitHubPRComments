@@ -22,13 +22,22 @@ npm run build
 
 > **Note:** Installing dependencies requires access to the npm registry. If the registry is unavailable, you can still use the precompiled `dist/content.js` checked into the repository.
 
+## Downloading a pre-built package
+
+If you prefer not to build the extension locally, every tagged release automatically publishes a
+`fold-github-pr-comments.zip` bundle that contains the compiled content script and manifest. You can
+download the latest archive from either the **Releases** page or the most recent run of the
+**Build Chrome extension package** workflow and load it directly in Chrome.
+
 ## Loading the extension
 
-1. Run the build step above (optional if you are using the bundled `dist/content.js`).
-2. Open `chrome://extensions` in Chrome.
-3. Enable **Developer mode**.
-4. Click **Load unpacked** and choose the repository directory.
-5. Navigate to a GitHub pull request conversation tab to see the folding controls.
+1. Download the latest `fold-github-pr-comments.zip` from a release or the Actions run (or run the
+   build step above to generate it yourself).
+2. Extract the archive so that the `manifest.json` and `dist/` folder are in the same directory.
+3. Open `chrome://extensions` in Chrome.
+4. Enable **Developer mode**.
+5. Click **Load unpacked** and choose the extracted directory (or the repository directory).
+6. Navigate to a GitHub pull request conversation tab to see the folding controls.
 
 ## Scope and limitations
 
