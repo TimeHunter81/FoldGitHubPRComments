@@ -1,0 +1,75 @@
+name: Build Chrome extension package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build content script
+        run: npm run build
+
+      - name: Verify required files
+        run: |
+          test -f manifest.json || { echo "::error::manifest.json not found"; exit 1; }
+          test -d dist || { echo "::error::dist/ directory not found"; exit 1; }
+          test -f dist/content.js || { echo "::error::dist/content.js not found"; exit 1; }
+          test -f LICENSE || { echo "::error::LICENSE not found"; exit 1; }
+
+      - name: Validate release version matches manifest
+        if: github.event_name == 'release'
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          MANIFEST_VERSION=$(jq -r '.version' manifest.json)
+          TAG_VERSION=${TAG_NAME#v}
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Manifest version ${MANIFEST_VERSION} does not match release tag ${TAG_NAME}"
+            exit 1
+          fi
+
+      - name: Create packaged archive
+        run: |
+          mkdir -p package
+          cp manifest.json package/
+          cp -r dist package/
+          cp LICENSE package/
+          cd package
+          zip -r ../fold-github-pr-comments.zip .
+
+      - name: Generate SHA256 checksum
+        run: shasum -a 256 fold-github-pr-comments.zip > fold-github-pr-comments.zip.sha256
+
+      - name: Upload packaged extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fold-github-pr-comments
+          path: |
+            fold-github-pr-comments.zip
+            fold-github-pr-comments.zip.sha256
+          retention-days: 90
+
+      - name: Attach package to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            fold-github-pr-comments.zip
+            fold-github-pr-comments.zip.sha256
