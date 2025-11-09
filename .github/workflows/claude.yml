@@ -19,7 +19,7 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write  # Required for git rebase and merge operations
       pull-requests: read
       issues: read
       id-token: write
@@ -46,5 +46,5 @@ jobs:
           # Optional: Add claude_args to customize behavior and configuration
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+          claude_args: '--allowed-tools Bash(git rebase:*) Bash(git merge:*)'
 
