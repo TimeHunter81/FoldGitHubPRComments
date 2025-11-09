@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Fold GitHub PR Comments",
+  "version": "0.1.0",
+  "description": "Folds older top-level comments in GitHub pull request conversations by default.",
+  "permissions": [],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/*/*/pull/*"
+      ],
+      "js": [
+        "dist/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
