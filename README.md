@@ -39,6 +39,19 @@ download the latest archive from either the **Releases** page or the most recent
 5. Click **Load unpacked** and choose the extracted directory (or the repository directory).
 6. Navigate to a GitHub pull request conversation tab to see the folding controls.
 
+## Claude automation setup
+
+Two optional GitHub Actions (`claude-code-review.yml` and `claude.yml`) call the
+Claude Code action. Add `CLAUDE_CODE_OAUTH_TOKEN` under **Settings → Secrets and
+variables → Actions** so the workflows can authenticate. When the secret is
+absent the jobs still run but skip the action with a warning, keeping the build
+status green.
+
+## Privacy
+
+The extension only runs on `github.com` pages and never transmits data off your
+device.
+
 ## Scope and limitations
 
 - Only GitHub pull request conversation pages on `github.com` are matched.

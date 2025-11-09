@@ -11,6 +11,8 @@ interface GroupState {
 const groupStates = new WeakMap<HTMLElement, GroupState>();
 let foldByDefault = true;
 let mutationObserver: MutationObserver | null = null;
+let observedDiscussionContainer: Element | null = null;
+let refreshScheduled = false;
 let initialized = false;
 
 function init(): void {
@@ -31,27 +33,31 @@ function setupGlobalListeners(): void {
   }
 
   mutationObserver = new MutationObserver(() => {
-    refresh();
+    scheduleRefresh();
   });
 
-  if (document.body) {
-    mutationObserver.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-  }
+  ensureObserverTarget();
 
-  document.addEventListener('pjax:end', refresh);
-  document.addEventListener('turbo:render', refresh);
+  document.addEventListener('pjax:end', scheduleRefresh);
+  document.addEventListener('turbo:render', scheduleRefresh);
+  document.addEventListener('pjax:beforeReplace', disconnectObserver);
+  document.addEventListener('turbo:before-render', disconnectObserver);
+  window.addEventListener('unload', disconnectObserver);
 }
 
 function refresh(): void {
-  if (!isConversationPage()) {
-    return;
-  }
+  try {
+    if (!isConversationPage()) {
+      disconnectObserver();
+      return;
+    }
 
-  insertHeaderControls();
-  synchronizeGroups();
+    ensureObserverTarget();
+    insertHeaderControls();
+    synchronizeGroups();
+  } catch (error) {
+    console.error('Fold GitHub PR Comments: refresh failed', error);
+  }
 }
 
 function isConversationPage(): boolean {
@@ -152,6 +158,8 @@ function getTimelineCommentGroups(): HTMLElement[] {
     return [];
   }
 
+  // GitHub wraps top-level timeline threads with `.js-timeline-item` and nests
+  // the actual comment content under `.timeline-comment-group`.
   const groups = Array.from(container.querySelectorAll<HTMLElement>('.js-timeline-item .timeline-comment-group'));
   return groups.filter(group => group.querySelector('.timeline-comment-header'));
 }
@@ -215,6 +223,8 @@ function setGroupFolded(group: HTMLElement, folded: boolean, userTriggered: bool
     return;
   }
 
+  // Preserve the distinction between default folding and user intent so manual
+  // toggles always win over subsequent refreshes.
   if (state.folded === folded && !(userTriggered && !state.userModified)) {
     if (userTriggered) {
       state.userModified = true;
@@ -297,6 +307,46 @@ function injectStyles(): void {
   `;
 
   document.head.appendChild(style);
+}
+
+function scheduleRefresh(): void {
+  if (refreshScheduled) {
+    return;
+  }
+
+  refreshScheduled = true;
+  requestAnimationFrame(() => {
+    refreshScheduled = false;
+    refresh();
+  });
+}
+
+function ensureObserverTarget(): void {
+  if (!mutationObserver) {
+    return;
+  }
+
+  const discussionBucket = document.querySelector('#discussion_bucket');
+  if (discussionBucket && discussionBucket !== observedDiscussionContainer) {
+    mutationObserver.disconnect();
+    mutationObserver.observe(discussionBucket, {
+      childList: true,
+      subtree: true
+    });
+    observedDiscussionContainer = discussionBucket;
+  } else if (!discussionBucket && observedDiscussionContainer) {
+    disconnectObserver();
+  }
+}
+
+function disconnectObserver(): void {
+  if (!mutationObserver || !observedDiscussionContainer) {
+    observedDiscussionContainer = null;
+    return;
+  }
+
+  mutationObserver.disconnect();
+  observedDiscussionContainer = null;
 }
 
 if (document.readyState === 'loading') {

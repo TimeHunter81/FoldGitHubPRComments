@@ -1,219 +1,231 @@
+"use strict";
 const FOLDED_CLASS = 'fgpc-folded';
 const HEADER_CONTROLS_CLASS = 'fgpc-page-controls';
 const TOGGLE_BUTTON_CLASS = 'fgpc-toggle-button';
 const groupStates = new WeakMap();
 let foldByDefault = true;
 let mutationObserver = null;
+let observedDiscussionContainer = null;
+let refreshScheduled = false;
 let initialized = false;
 function init() {
-  if (initialized) {
+    if (initialized) {
+        refresh();
+        return;
+    }
+    initialized = true;
+    injectStyles();
     refresh();
-    return;
-  }
-  initialized = true;
-  injectStyles();
-  refresh();
-  setupGlobalListeners();
+    setupGlobalListeners();
 }
 function setupGlobalListeners() {
-  if (mutationObserver) {
-    return;
-  }
-  mutationObserver = new MutationObserver(() => {
-    refresh();
-  });
-  if (document.body) {
-    mutationObserver.observe(document.body, {
-      childList: true,
-      subtree: true
+    if (mutationObserver) {
+        return;
+    }
+    mutationObserver = new MutationObserver(() => {
+        scheduleRefresh();
     });
-  }
-  document.addEventListener('pjax:end', refresh);
-  document.addEventListener('turbo:render', refresh);
+    ensureObserverTarget();
+    document.addEventListener('pjax:end', scheduleRefresh);
+    document.addEventListener('turbo:render', scheduleRefresh);
+    document.addEventListener('pjax:beforeReplace', disconnectObserver);
+    document.addEventListener('turbo:before-render', disconnectObserver);
+    window.addEventListener('unload', disconnectObserver);
 }
 function refresh() {
-  if (!isConversationPage()) {
-    return;
-  }
-  insertHeaderControls();
-  synchronizeGroups();
+    try {
+        if (!isConversationPage()) {
+            disconnectObserver();
+            return;
+        }
+        ensureObserverTarget();
+        insertHeaderControls();
+        synchronizeGroups();
+    }
+    catch (error) {
+        console.error('Fold GitHub PR Comments: refresh failed', error);
+    }
 }
 function isConversationPage() {
-  return document.querySelector('#discussion_bucket') !== null;
+    return document.querySelector('#discussion_bucket') !== null;
 }
 function insertHeaderControls() {
-  const headerMeta = document.querySelector('.gh-header-meta');
-  if (!headerMeta) {
-    return;
-  }
-  let container = headerMeta.querySelector(`.${HEADER_CONTROLS_CLASS}`);
-  if (!container) {
-    container = document.createElement('span');
-    container.className = `${HEADER_CONTROLS_CLASS} d-inline-flex flex-items-center flex-wrap gap-2 ml-2`;
-    const defaultLabel = document.createElement('label');
-    defaultLabel.className = 'd-inline-flex flex-items-center gap-1 fgpc-default-toggle';
-    const defaultCheckbox = document.createElement('input');
-    defaultCheckbox.type = 'checkbox';
-    defaultCheckbox.id = 'fgpc-fold-default';
-    defaultCheckbox.checked = foldByDefault;
-    defaultCheckbox.addEventListener('change', () => {
-      setFoldByDefault(defaultCheckbox.checked);
-    });
-    const labelText = document.createElement('span');
-    labelText.textContent = 'Fold older comments';
-    defaultLabel.append(defaultCheckbox, labelText);
-    const foldAllButton = createControlButton('Fold all', 'Fold every top-level comment in the conversation', () => {
-      foldAll();
-    });
-    const unfoldAllButton = createControlButton('Unfold all', 'Unfold every top-level comment in the conversation', () => {
-      unfoldAll();
-    });
-    container.append(defaultLabel, foldAllButton, unfoldAllButton);
-    headerMeta.appendChild(container);
-  }
-  else {
-    const checkbox = container.querySelector('#fgpc-fold-default');
-    if (checkbox) {
-      checkbox.checked = foldByDefault;
+    const headerMeta = document.querySelector('.gh-header-meta');
+    if (!headerMeta) {
+        return;
     }
-  }
+    let container = headerMeta.querySelector(`.${HEADER_CONTROLS_CLASS}`);
+    if (!container) {
+        container = document.createElement('span');
+        container.className = `${HEADER_CONTROLS_CLASS} d-inline-flex flex-items-center flex-wrap gap-2 ml-2`;
+        const defaultLabel = document.createElement('label');
+        defaultLabel.className = 'd-inline-flex flex-items-center gap-1 fgpc-default-toggle';
+        const defaultCheckbox = document.createElement('input');
+        defaultCheckbox.type = 'checkbox';
+        defaultCheckbox.id = 'fgpc-fold-default';
+        defaultCheckbox.checked = foldByDefault;
+        defaultCheckbox.addEventListener('change', () => {
+            setFoldByDefault(defaultCheckbox.checked);
+        });
+        const labelText = document.createElement('span');
+        labelText.textContent = 'Fold older comments';
+        defaultLabel.append(defaultCheckbox, labelText);
+        const foldAllButton = createControlButton('Fold all', 'Fold every top-level comment in the conversation', () => {
+            foldAll();
+        });
+        const unfoldAllButton = createControlButton('Unfold all', 'Unfold every top-level comment in the conversation', () => {
+            unfoldAll();
+        });
+        container.append(defaultLabel, foldAllButton, unfoldAllButton);
+        headerMeta.appendChild(container);
+    }
+    else {
+        const checkbox = container.querySelector('#fgpc-fold-default');
+        if (checkbox) {
+            checkbox.checked = foldByDefault;
+        }
+    }
 }
 function createControlButton(label, title, onClick) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'btn-link fgpc-control-button';
-  button.textContent = label;
-  button.title = title;
-  button.addEventListener('click', onClick);
-  return button;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn-link fgpc-control-button';
+    button.textContent = label;
+    button.title = title;
+    button.addEventListener('click', onClick);
+    return button;
 }
 function setFoldByDefault(enabled) {
-  foldByDefault = enabled;
-  const groups = getTimelineCommentGroups();
-  if (enabled) {
-    groups.forEach(group => {
-      const state = groupStates.get(group);
-      if (state) {
-        state.userModified = false;
-      }
-    });
-    applyDefaultFolding(groups);
-  }
-  else {
-    groups.forEach(group => {
-      setGroupFolded(group, false, true);
-    });
-  }
+    foldByDefault = enabled;
+    const groups = getTimelineCommentGroups();
+    if (enabled) {
+        groups.forEach(group => {
+            const state = groupStates.get(group);
+            if (state) {
+                state.userModified = false;
+            }
+        });
+        applyDefaultFolding(groups);
+    }
+    else {
+        groups.forEach(group => {
+            setGroupFolded(group, false, true);
+        });
+    }
 }
 function foldAll() {
-  getTimelineCommentGroups().forEach(group => setGroupFolded(group, true, true));
+    getTimelineCommentGroups().forEach(group => setGroupFolded(group, true, true));
 }
 function unfoldAll() {
-  getTimelineCommentGroups().forEach(group => setGroupFolded(group, false, true));
+    getTimelineCommentGroups().forEach(group => setGroupFolded(group, false, true));
 }
 function synchronizeGroups() {
-  const groups = getTimelineCommentGroups();
-  groups.forEach(group => ensureGroupInitialized(group));
-  applyDefaultFolding(groups);
+    const groups = getTimelineCommentGroups();
+    groups.forEach(group => ensureGroupInitialized(group));
+    applyDefaultFolding(groups);
 }
 function getTimelineCommentGroups() {
-  const container = document.querySelector('#discussion_bucket');
-  if (!container) {
-    return [];
-  }
-  const groups = Array.from(container.querySelectorAll('.js-timeline-item .timeline-comment-group'));
-  return groups.filter(group => group.querySelector('.timeline-comment-header'));
+    const container = document.querySelector('#discussion_bucket');
+    if (!container) {
+        return [];
+    }
+    // GitHub wraps top-level timeline threads with `.js-timeline-item` and nests
+    // the actual comment content under `.timeline-comment-group`.
+    const groups = Array.from(container.querySelectorAll('.js-timeline-item .timeline-comment-group'));
+    return groups.filter(group => group.querySelector('.timeline-comment-header'));
 }
 function ensureGroupInitialized(group) {
-  if (groupStates.has(group)) {
-    return;
-  }
-  const header = group.querySelector('.timeline-comment-header');
-  if (!header) {
-    return;
-  }
-  const existingButton = header.querySelector(`.${TOGGLE_BUTTON_CLASS}`);
-  if (existingButton) {
-    groupStates.set(group, {
-      button: existingButton,
-      folded: group.classList.contains(FOLDED_CLASS),
-      userModified: false
+    if (groupStates.has(group)) {
+        return;
+    }
+    const header = group.querySelector('.timeline-comment-header');
+    if (!header) {
+        return;
+    }
+    const existingButton = header.querySelector(`.${TOGGLE_BUTTON_CLASS}`);
+    if (existingButton) {
+        groupStates.set(group, {
+            button: existingButton,
+            folded: group.classList.contains(FOLDED_CLASS),
+            userModified: false
+        });
+        return;
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `btn-link ${TOGGLE_BUTTON_CLASS}`;
+    button.textContent = 'Fold';
+    button.setAttribute('aria-expanded', 'true');
+    button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleGroupFold(group);
     });
-    return;
-  }
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = `btn-link ${TOGGLE_BUTTON_CLASS}`;
-  button.textContent = 'Fold';
-  button.setAttribute('aria-expanded', 'true');
-  button.addEventListener('click', event => {
-    event.preventDefault();
-    event.stopPropagation();
-    toggleGroupFold(group);
-  });
-  const actions = header.querySelector('.timeline-comment-actions');
-  if (actions) {
-    actions.prepend(button);
-  }
-  else {
-    header.appendChild(button);
-  }
-  groupStates.set(group, {
-    button,
-    folded: false,
-    userModified: false
-  });
+    const actions = header.querySelector('.timeline-comment-actions');
+    if (actions) {
+        actions.prepend(button);
+    }
+    else {
+        header.appendChild(button);
+    }
+    groupStates.set(group, {
+        button,
+        folded: false,
+        userModified: false
+    });
 }
 function toggleGroupFold(group) {
-  const state = groupStates.get(group);
-  if (!state) {
-    return;
-  }
-  setGroupFolded(group, !state.folded, true);
+    const state = groupStates.get(group);
+    if (!state) {
+        return;
+    }
+    setGroupFolded(group, !state.folded, true);
 }
 function setGroupFolded(group, folded, userTriggered) {
-  const state = groupStates.get(group);
-  if (!state) {
-    return;
-  }
-  if (state.folded === folded && !(userTriggered && !state.userModified)) {
-    if (userTriggered) {
-      state.userModified = true;
+    const state = groupStates.get(group);
+    if (!state) {
+        return;
     }
-    return;
-  }
-  group.classList.toggle(FOLDED_CLASS, folded);
-  state.folded = folded;
-  state.button.textContent = folded ? 'Unfold' : 'Fold';
-  state.button.setAttribute('aria-expanded', String(!folded));
-  if (userTriggered) {
-    state.userModified = true;
-  }
+    // Preserve the distinction between default folding and user intent so manual
+    // toggles always win over subsequent refreshes.
+    if (state.folded === folded && !(userTriggered && !state.userModified)) {
+        if (userTriggered) {
+            state.userModified = true;
+        }
+        return;
+    }
+    group.classList.toggle(FOLDED_CLASS, folded);
+    state.folded = folded;
+    state.button.textContent = folded ? 'Unfold' : 'Fold';
+    state.button.setAttribute('aria-expanded', String(!folded));
+    if (userTriggered) {
+        state.userModified = true;
+    }
 }
 function applyDefaultFolding(groups) {
-  if (!foldByDefault || groups.length === 0) {
-    return;
-  }
-  const lastGroup = groups[groups.length - 1];
-  groups.forEach(group => {
-    const state = groupStates.get(group);
-    if (!state || state.userModified) {
-      return;
+    if (!foldByDefault || groups.length === 0) {
+        return;
     }
-    const shouldFold = group !== lastGroup;
-    group.classList.toggle(FOLDED_CLASS, shouldFold);
-    state.folded = shouldFold;
-    state.button.textContent = shouldFold ? 'Unfold' : 'Fold';
-    state.button.setAttribute('aria-expanded', String(!shouldFold));
-  });
+    const lastGroup = groups[groups.length - 1];
+    groups.forEach(group => {
+        const state = groupStates.get(group);
+        if (!state || state.userModified) {
+            return;
+        }
+        const shouldFold = group !== lastGroup;
+        group.classList.toggle(FOLDED_CLASS, shouldFold);
+        state.folded = shouldFold;
+        state.button.textContent = shouldFold ? 'Unfold' : 'Fold';
+        state.button.setAttribute('aria-expanded', String(!shouldFold));
+    });
 }
 function injectStyles() {
-  if (document.head.querySelector('style[data-fgpc]')) {
-    return;
-  }
-  const style = document.createElement('style');
-  style.dataset.fgpc = 'true';
-  style.textContent = `
+    if (document.head.querySelector('style[data-fgpc]')) {
+        return;
+    }
+    const style = document.createElement('style');
+    style.dataset.fgpc = 'true';
+    style.textContent = `
     .${HEADER_CONTROLS_CLASS} {
       font-size: 12px;
       gap: 0.5rem;
@@ -250,11 +262,47 @@ function injectStyles() {
       border-bottom: none;
     }
   `;
-  document.head.appendChild(style);
+    document.head.appendChild(style);
+}
+function scheduleRefresh() {
+    if (refreshScheduled) {
+        return;
+    }
+    refreshScheduled = true;
+    requestAnimationFrame(() => {
+        refreshScheduled = false;
+        refresh();
+    });
+}
+function ensureObserverTarget() {
+    if (!mutationObserver) {
+        return;
+    }
+    const discussionBucket = document.querySelector('#discussion_bucket');
+    if (discussionBucket && discussionBucket !== observedDiscussionContainer) {
+        mutationObserver.disconnect();
+        mutationObserver.observe(discussionBucket, {
+            childList: true,
+            subtree: true
+        });
+        observedDiscussionContainer = discussionBucket;
+    }
+    else if (!discussionBucket && observedDiscussionContainer) {
+        disconnectObserver();
+    }
+}
+function disconnectObserver() {
+    if (!mutationObserver || !observedDiscussionContainer) {
+        observedDiscussionContainer = null;
+        return;
+    }
+    mutationObserver.disconnect();
+    observedDiscussionContainer = null;
 }
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', init);
 }
 else {
-  init();
+    init();
 }
+//# sourceMappingURL=content.js.map
